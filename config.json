@@ -12,8 +12,8 @@
   "antiInbox": false,
   "language": "en",
   "notesLanguage": "change language using ISO 639-1 code",
-  "nickNameBot": "XUDI OKAY?",
-  "prefix": "/",
+  "nickNameBot": "♡┋Habibᥫ᭡",
+  "prefix": ".",
   "enableTypingIndicator": false,
   "typingDuration": 2000,
   "notesTypingIndicator": "true = show 'is typing...' before every reply (more human-like, adds visible delay) | false = reply instantly, no typing shown",
@@ -26,7 +26,7 @@
     "ignoreCommand": []
   },
   "adminBot": [
-    "61592832917083",
+    "100093182723125",
     " ",
     " "
   ],
@@ -42,7 +42,7 @@
   "whiteListMode": {
     "enable": false,
     "whiteListIds": [
-      "",
+      "100093182723125",
       ""
     ],
     "notes": "If enabled, only IDs in whiteListIds can use the bot."
