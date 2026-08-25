@@ -1,73 +1,128 @@
 const fs = require("fs");
+const path = require("path");
 const { downloadVideo } = require("sagor-video-downloader");
 
+const CACHE_DIR = path.join(__dirname, "cache");
+
+if (!fs.existsSync(CACHE_DIR)) {
+	fs.mkdirSync(CACHE_DIR, { recursive: true });
+}
+
+// Currently processing messages (prevents double send)
+const processing = new Set();
+
+const VIDEO_LINK_REGEX = /(https?:\/\/(?:www\.|m\.)?(?:facebook\.com|fb\.watch|fb\.com|tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com|instagram\.com|instagr\.am|threads\.net|twitter\.com|x\.com|t\.co|youtube\.com|youtu\.be|pinterest\.com|pin\.it|likee\.video|capcut\.com)[^\s]*)/gi;
+
 module.exports = {
-    config: {
-        name: "autolink",
-        version: "1.3",
-        author: "MOHAMMAD AKASH",
-        countDown: 5,
-        role: 0,
-        shortDescription: "Auto-download & send videos silently (no messages)",
-        category: "media",
-    },
+	config: {
+		name: "autodl",
+		aliases: ["adl", "autodown"],
+		version: "1.2.0",
+		author: "Sk Habibulla",
+		countDown: 5,
+		role: 0,
+		shortDescription: {
+			en: "Auto download video when link is pasted"
+		},
+		description: {
+			en: "Automatically downloads Facebook, TikTok, Instagram videos when someone pastes a link (no command needed)"
+		},
+		category: "media",
+		guide: {
+			en: "Just paste any supported video link in the chat\nOr use: {pn} <link>"
+		}
+	},
 
-    onStart: async function () {},
+	onStart: async function ({ api, args, message, event }) {
+		const url = args.join(" ").trim();
+		if (!url) {
+			return message.reply("📥 শুধু ভিডিও লিংক পেস্ট করো, অটো ডাউনলোড হয়ে যাবে!\n\nঅথবা: autodl <link>");
+		}
+		await handleDownload({ api, message, event, url, isAuto: false });
+	},
 
-    onChat: async function ({ api, event }) {
-        const threadID = event.threadID;
-        const messageID = event.messageID;
-        const message = event.body || "";
+	onChat: async function ({ api, message, event }) {
+		// Ignore bot's own messages
+		if (event.senderID == api.getCurrentUserID()) return;
 
-        const linkMatches = message.match(/(https?:\/\/[^\s]+)/g);
-        if (!linkMatches || linkMatches.length === 0) return;
+		const body = event.body || "";
+		if (!body || body.length < 10) return;
 
-        const uniqueLinks = [...new Set(linkMatches)];
+		const matches = body.match(VIDEO_LINK_REGEX);
+		if (!matches || matches.length === 0) return;
 
-        api.setMessageReaction("⏳", messageID, () => {}, true);
+		const url = matches[0].trim();
 
-        let successCount = 0;
-        let failCount = 0;
+		// Prevent double processing of the same message
+		const lockKey = event.messageID || `\( {event.threadID}_ \){url}`;
+		if (processing.has(lockKey)) return;
+		processing.add(lockKey);
 
-        for (const url of uniqueLinks) {
-            try {
-                const { title, filePath } = await downloadVideo(url);
-                if (!filePath || !fs.existsSync(filePath)) throw new Error();
+		// Auto remove lock after 60 seconds (safety)
+		setTimeout(() => processing.delete(lockKey), 60000);
 
-                const stats = fs.statSync(filePath);
-                const fileSizeInMB = stats.size / (1024 * 1024);
+		await new Promise(r => setTimeout(r, 600));
 
-                if (fileSizeInMB > 25) {
-                    fs.unlinkSync(filePath);
-                    failCount++;
-                    continue;
-                }
-
-                await api.sendMessage(
-                    {
-                        body:
-`📥 ᴠɪᴅᴇᴏ ᴅᴏᴡɴʟᴏᴀᴅᴇᴅ  
-━━━━━━━━━━━━━━━  
-🎬 ᴛɪᴛʟᴇ: ${title || "Video File"}  
-📦 sɪᴢᴇ: ${fileSizeInMB.toFixed(2)} MB  
-━━━━━━━━━━━━━━━`,
-                        attachment: fs.createReadStream(filePath)
-                    },
-                    threadID,
-                    () => fs.unlinkSync(filePath)
-                );
-
-                successCount++;
-
-            } catch {
-                failCount++;
-            }
-        }
-
-        const finalReaction =
-            successCount > 0 && failCount === 0 ? "✅" :
-            successCount > 0 ? "⚠️" : "❌";
-
-        api.setMessageReaction(finalReaction, messageID, () => {}, true);
-    }
+		await handleDownload({ api, message, event, url, isAuto: true, lockKey });
+	}
 };
+
+async function handleDownload({ api, message, event, url, isAuto = false, lockKey = null }) {
+	let waitingMsg;
+
+	try {
+		waitingMsg = await message.reply(
+			isAuto
+				? "🔗 লিংক ডিটেক্ট হয়েছে!\n⏳ ভিডিও ডাউনলোড হচ্ছে..."
+				: "⏳ ভিডিও ডাউনলোড হচ্ছে..."
+		);
+	} catch (_) {}
+
+	const fileName = `autodl_${Date.now()}.mp4`;
+	const filePath = path.join(CACHE_DIR, fileName);
+
+	try {
+		const result = await downloadVideo(url, filePath);
+
+		const title = result.title || "Video";
+		const finalPath = result.filePath || filePath;
+
+		if (!fs.existsSync(finalPath)) {
+			throw new Error("ফাইল তৈরি হয়নি");
+		}
+
+		const stats = fs.statSync(finalPath);
+		if (stats.size < 1024) {
+			fs.unlinkSync(finalPath);
+			throw new Error("ফাইল খুব ছোট — ডাউনলোড ফেইল হয়েছে");
+		}
+
+		await message.reply({
+			body: `🎬 𝗧𝗶𝘁𝗹𝗲: ${title}\n\n✅ Owner: Sk Habibulla`,
+			attachment: fs.createReadStream(finalPath)
+		});
+
+		// Cleanup
+		setTimeout(() => {
+			try {
+				if (fs.existsSync(finalPath)) fs.unlinkSync(finalPath);
+			} catch (_) {}
+		}, 20000);
+
+	} catch (err) {
+		console.error("[autodl] Error:", err.message);
+
+		if (!isAuto) {
+			await message.reply(`❌ ডাউনলোড করতে পারিনি:\n${err.message}`);
+		}
+	} finally {
+		// Unlock
+		if (lockKey) processing.delete(lockKey);
+
+		if (waitingMsg && waitingMsg.messageID) {
+			try {
+				await api.unsendMessage(waitingMsg.messageID);
+			} catch (_) {}
+		}
+	}
+}
